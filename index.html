@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global IPTV Player</title>
+    <!-- Подключаем HLS.js -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #f8fafc;
+            --text-secondary: #94a3b8;
+            --accent: #3b82f6;
+            --border: #334155;
+        }
+
+        body.light {
+            --bg-color: #f1f5f9;
+            --card-bg: #ffffff;
+            --text-color: #0f172a;
+            --text-secondary: #64748b;
+            --border: #cbd5e1;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        aside {
+            width: 380px;
+            background-color: var(--card-bg);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .sidebar-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .top-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 1.2rem;
+        }
+
+        .theme-toggle {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-color);
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--bg-color);
+            border: 1px solid var(--border);
+            color: var(--text-color);
+            border-radius: 6px;
+            outline: none;
+        }
+
+        .channel-list {
+            overflow-y: auto;
+            flex: 1;
+            padding: 8px;
+        }
+
+        .channel-item {
+            padding: 10px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 4px;
+            font-size: 0.95rem;
+            transition: background 0.2s;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .channel-item:hover {
+            background: var(--border);
+        }
+
+        .channel-item.active {
+            background: var(--accent);
+            color: #ffffff;
+        }
+
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 24px;
+        }
+
+        .player-container {
+            width: 100%;
+            max-width: 960px;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+            aspect-ratio: 16/9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            outline: none;
+        }
+
+        .current-title {
+            margin-top: 16px;
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        .loader {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+
+    <aside>
+        <div class="sidebar-header">
+            <div class="top-row">
+                <h1>IPTV Player</h1>
+                <button class="theme-toggle" onclick="toggleTheme()">Тема</button>
+            </div>
+            <!-- Плейлисты только для Беларуси, Казахстана, России и Украины -->
+            <select id="playlistSelect" onchange="loadPlaylistFromSelect()">
+                <option value="https://iptv-org.github.io/iptv/countries/by.m3u">Беларусь (BY)</option>
+                <option value="https://iptv-org.github.io/iptv/countries/kz.m3u">Казахстан (KZ)</option>
+                <option value="https://iptv-org.github.io/iptv/countries/ru.m3u" selected>Россия (RU)</option>
+                <option value="https://iptv-org.github.io/iptv/countries/ua.m3u">Украина (UA)</option>
+            </select>
+            <input type="text" id="search" placeholder="Поиск каналов..." oninput="filterChannels()">
+        </div>
+        <div class="channel-list" id="channelList">
+            <div class="loader">Выберите плейлист...</div>
+        </div>
+    </aside>
+
+    <main>
+        <div class="player-container">
+            <video id="videoPlayer" controls autoplay></video>
+        </div>
+        <div class="current-title" id="currentTitle">Выберите канал</div>
+    </main>
+
+    <script>
+        let channels = [];
+        let hls = null;
+        const video = document.getElementById('videoPlayer');
+        const titleEl = document.getElementById('currentTitle');
+        const listEl = document.getElementById('channelList');
+        const searchInput = document.getElementById('search');
+        const selectEl = document.getElementById('playlistSelect');
+
+        async function loadPlaylistFromSelect() {
+            const url = selectEl.value;
+            listEl.innerHTML = '<div class="loader">Загрузка плейлиста...</div>';
+            searchInput.value = '';
+            
+            try {
+                const response = await fetch(url);
+                const text = await response.text();
+                parseM3U(text);
+            } catch (e) {
+                console.error(e);
+                listEl.innerHTML = '<div class="loader">Ошибка загрузки (проверьте CORS / сети)</div>';
+            }
+        }
+
+        function parseM3U(data) {
+            channels = [];
+            const lines = data.split('\n');
+            let currentChannel = {};
+
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i].trim();
+                if (line.startsWith('#EXTINF:')) {
+                    const nameMatch = line.match(/,(.+)$/);
+                    currentChannel.name = nameMatch ? nameMatch[1] : "Без названия";
+                } else if (line && !line.startsWith('#')) {
+                    currentChannel.url = line;
+                    channels.push(currentChannel);
+                    currentChannel = {};
+                }
+            }
+
+            renderChannels(channels);
+            if (channels.length > 0) {
+                selectChannel(0, listEl.firstElementChild);
+            }
+        }
+
+        function renderChannels(items) {
+            listEl.innerHTML = '';
+            if (items.length === 0) {
+                listEl.innerHTML = '<div class="loader">Каналы не найдены</div>';
+                return;
+            }
+            
+            items.forEach((channel, index) => {
+                const div = document.createElement('div');
+                div.className = 'channel-item';
+                div.innerText = channel.name;
+                div.onclick = () => selectChannel(index, div);
+                listEl.appendChild(div);
+            });
+        }
+
+        function selectChannel(index, element) {
+            document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
+            if(element) element.classList.add('active');
+
+            const channel = channels[index];
+            if (!channel) return;
+            titleEl.innerText = channel.name;
+            playStream(channel.url);
+        }
+
+        function playStream(url) {
+            if (hls) {
+                hls.destroy();
+            }
+
+            if (Hls.isSupported()) {
+                hls = new Hls();
+                hls.loadSource(url);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    video.play().catch(e => console.log("Autoplay blocked:", e));
+                });
+                hls.on(Hls.Events.ERROR, (event, data) => {
+                    if (data.fatal) {
+                        console.error("HLS error:", data.type);
+                    }
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = url;
+                video.addEventListener('loadedmetadata', () => {
+                    video.play();
+                });
+            } else {
+                alert('Ваш браузер не поддерживает HLS');
+            }
+        }
+
+        function filterChannels() {
+            const query = searchInput.value.toLowerCase();
+            const filtered = channels.filter(c => c.name && c.name.toLowerCase().includes(query));
+            renderChannels(filtered);
+        }
+
+        function toggleTheme() {
+            document.body.classList.toggle('light');
+        }
+
+        // Автозагрузка при старте
+        loadPlaylistFromSelect();
+    </script>
+</body>
+</html>
